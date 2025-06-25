@@ -2,14 +2,9 @@ use std::convert::Infallible;
 
 use async_stream::stream;
 use axum::{
-    Router,
-    extract::State,
-    http::StatusCode,
-    response::{
-        IntoResponse, Sse,
-        sse::{Event, KeepAlive},
-    },
-    routing::get,
+    extract::State, http::StatusCode, response::{
+        sse::{Event, KeepAlive}, Html, IntoResponse, Sse
+    }, routing::get, Router
 };
 use futures::Stream;
 use tokio::{
@@ -18,17 +13,24 @@ use tokio::{
 };
 use tower_http::cors::{Any, CorsLayer};
 
-static COUNTER: OnceCell<Mutex<u32>> = OnceCell::const_new();
+static VISITAS: OnceCell<Mutex<u32>> = OnceCell::const_new();
+static CLIQUES: OnceCell<Mutex<u32>> = OnceCell::const_new();
+
+#[derive(Clone)]
+enum ServerSideEvent {
+    Visita,
+    Clique
+}
 
 #[derive(Clone)]
 struct AppState {
-    tx: broadcast::Sender<String>,
+    sse: broadcast::Sender<ServerSideEvent>,
 }
 
 #[tokio::main]
 async fn main() {
     let (tx, _) = broadcast::channel(1);
-    let state = AppState { tx };
+    let state = AppState { sse: tx };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -36,7 +38,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(home_handler))
-        .route("/sse", get(sse_handler))
+        .route("/clique", get(clique_handler))
+        .route("/sse/visita", get(sse_visita_handler))
+        .route("/sse/clique", get(sse_clique_handler))
         .with_state(state)
         .layer(cors);
 
@@ -47,37 +51,68 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn home_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let mut counter = COUNTER
+async fn home_handler(State(state): State<AppState>) -> Html<String> {
+    let mut visitas = VISITAS
         .get_or_init(async || Mutex::new(0))
         .await
         .lock()
         .await;
 
-    *counter += 1;
+    *visitas += 1;
 
-    let _ = state.tx.send("".to_string());
+    let _ = state.sse.send(ServerSideEvent::Visita);
 
-    (StatusCode::OK, (*counter).to_string())
+    Html(include_str!("index.html").to_string())
 }
 
-async fn sse_handler(
+async fn clique_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let mut cliques = CLIQUES.get_or_init(async || Mutex::new(0)).await.lock().await;
+
+    *cliques += 1;
+    
+
+    let _ = state.sse.send(ServerSideEvent::Clique);
+
+    (StatusCode::OK, ())
+}
+
+async fn sse_visita_handler(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let mut rx = state.tx.subscribe();
+    let mut rx = state.sse.subscribe();
 
     Sse::new(stream! {
         {
-            let counter = *COUNTER.get().unwrap().lock().await;
+            let visitas = *VISITAS.get().unwrap().lock().await;
 
-            yield Ok(Event::default().data(counter.to_string()))
+            yield Ok(Event::default().data(visitas.to_string()))
         }
 
         while let Ok(_) = rx.recv().await {
-            let counter = *COUNTER.get().unwrap().lock().await;
+            let visitas = *VISITAS.get().unwrap().lock().await;
 
-            yield Ok(Event::default().data(counter.to_string()))
+            yield Ok(Event::default().data(visitas.to_string()))
         }
     })
     .keep_alive(KeepAlive::default())
+}
+
+async fn sse_clique_handler(
+    State(state): State<AppState>
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = state.sse.subscribe();
+
+    Sse::new(stream! {
+        {
+            let cliques = *CLIQUES.get().unwrap().lock().await;
+
+            yield Ok(Event::default().data(cliques.to_string()))
+        }
+
+        while let Ok(_) = rx.recv().await {
+            let cliques = *CLIQUES.get().unwrap().lock().await;
+
+            yield Ok(Event::default().data(cliques.to_string()))
+        }
+    }).keep_alive(KeepAlive::default())
 }

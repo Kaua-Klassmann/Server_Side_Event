@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <h1 id="visitas">Visitas: 0</h1>
+    <h1 id="cliques">Cliques: 0</h1>
+</body>
+<script>
+    const visitas = document.getElementById("visitas");
+    const cliques = document.getElementById("cliques");
+
+    const eventVisita = new EventSource("http://127.0.0.1:3000/sse/visita");
+    const eventClique = new EventSource("http://127.0.0.1:3000/sse/clique");
+
+    eventVisita.onmessage = function(event) {
+        visitas.textContent = "Visitas: " + event.data;
+    }
+
+    eventClique.onmessage = function(event) {
+        cliques.textContent = "Cliques: " + event.data;
+    }
+    
+    eventVisita.onerror = function(_) {
+        console.log("Fudeu")
+    }
+
+    eventClique.onerror = function(_) {
+        console.log("Fudeu")
+    }
+</script>
+</html>

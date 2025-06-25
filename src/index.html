@@ -6,19 +6,14 @@
     <title>Document</title>
 </head>
 <body>
-    <h1>0</h1>
+    Oi
+    <button>Clicar</button>
 </body>
 <script>
-    const title = document.querySelector("h1");
+    const button = document.querySelector("button");
 
-    const eventSource = new EventSource("http://127.0.0.1:3000/sse");
-
-    eventSource.onmessage = function(event) {
-        title.textContent = event.data;
-    }
-    
-    eventSource.onerror = function(_) {
-        console.log("Fudeu")
-    }
+    button.addEventListener("click", async () => {
+        fetch("http://127.0.0.1:3000/clique")
+    })
 </script>
 </html>
