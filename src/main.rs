@@ -2,9 +2,14 @@ use std::convert::Infallible;
 
 use async_stream::stream;
 use axum::{
-    extract::State, http::StatusCode, response::{
-        sse::{Event, KeepAlive}, Html, IntoResponse, Sse
-    }, routing::get, Router
+    Router,
+    extract::State,
+    http::StatusCode,
+    response::{
+        Html, IntoResponse, Sse,
+        sse::{Event, KeepAlive},
+    },
+    routing::get,
 };
 use futures::Stream;
 use tokio::{
@@ -16,10 +21,10 @@ use tower_http::cors::{Any, CorsLayer};
 static VISITAS: OnceCell<Mutex<u32>> = OnceCell::const_new();
 static CLIQUES: OnceCell<Mutex<u32>> = OnceCell::const_new();
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum ServerSideEvent {
-    Visita,
-    Clique
+    Visita(u32),
+    Clique(u32),
 }
 
 #[derive(Clone)]
@@ -52,26 +57,33 @@ async fn main() {
 }
 
 async fn home_handler(State(state): State<AppState>) -> Html<String> {
-    let mut visitas = VISITAS
-        .get_or_init(async || Mutex::new(0))
-        .await
-        .lock()
-        .await;
+    tokio::spawn(async move {
+        let mut visitas = VISITAS
+            .get_or_init(async || Mutex::new(0))
+            .await
+            .lock()
+            .await;
 
-    *visitas += 1;
+        *visitas += 1;
 
-    let _ = state.sse.send(ServerSideEvent::Visita);
+        let _ = state.sse.send(ServerSideEvent::Visita(*visitas));
+    });
 
     Html(include_str!("index.html").to_string())
 }
 
 async fn clique_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let mut cliques = CLIQUES.get_or_init(async || Mutex::new(0)).await.lock().await;
+    tokio::spawn(async move {
+        let mut cliques = CLIQUES
+            .get_or_init(async || Mutex::new(0))
+            .await
+            .lock()
+            .await;
 
-    *cliques += 1;
-    
+        *cliques += 1;
 
-    let _ = state.sse.send(ServerSideEvent::Clique);
+        let _ = state.sse.send(ServerSideEvent::Clique(*cliques));
+    });
 
     (StatusCode::OK, ())
 }
@@ -83,36 +95,49 @@ async fn sse_visita_handler(
 
     Sse::new(stream! {
         {
-            let visitas = *VISITAS.get().unwrap().lock().await;
+            let mut visitas = VISITAS
+                .get_or_init(async || Mutex::new(0))
+                .await
+                .lock()
+                .await;
+
+            *visitas += 1;
 
             yield Ok(Event::default().data(visitas.to_string()))
         }
 
-        while let Ok(_) = rx.recv().await {
-            let visitas = *VISITAS.get().unwrap().lock().await;
-
-            yield Ok(Event::default().data(visitas.to_string()))
+        while let Ok(event) = rx.recv().await {
+            if let ServerSideEvent::Visita(visitas) = event {
+                yield Ok(Event::default().data(visitas.to_string()))
+            }
         }
     })
     .keep_alive(KeepAlive::default())
 }
 
 async fn sse_clique_handler(
-    State(state): State<AppState>
+    State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut rx = state.sse.subscribe();
 
     Sse::new(stream! {
         {
-            let cliques = *CLIQUES.get().unwrap().lock().await;
+            let mut cliques = CLIQUES
+                .get_or_init(async || Mutex::new(0))
+                .await
+                .lock()
+                .await;
+
+            *cliques += 1;
 
             yield Ok(Event::default().data(cliques.to_string()))
         }
 
-        while let Ok(_) = rx.recv().await {
-            let cliques = *CLIQUES.get().unwrap().lock().await;
-
-            yield Ok(Event::default().data(cliques.to_string()))
+        while let Ok(event) = rx.recv().await {
+            if let ServerSideEvent::Clique(cliques) = event {
+                yield Ok(Event::default().data(cliques.to_string()))
+            }
         }
-    }).keep_alive(KeepAlive::default())
+    })
+    .keep_alive(KeepAlive::default())
 }
